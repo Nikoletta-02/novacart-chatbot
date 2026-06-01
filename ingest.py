@@ -1,6 +1,6 @@
 """
-ingest.py  –  NovaCart RAG Ingestion Pipeline
-Reads the 3 source documents, chunks them, embeds and stores in ChromaDB.
+ingest.py  -  NovaCart RAG Ingestion Pipeline
+Reads source documents, chunks them, embeds and stores in ChromaDB.
 Run once before starting the app:  python ingest.py
 """
 
@@ -23,6 +23,7 @@ EMBED_MODEL = "all-MiniLM-L6-v2"
 DOCS = {
     "company_profile": os.path.join(DATA_DIR, "NovaCart_Company_Profile.docx"),
     "qa_knowledge":    os.path.join(DATA_DIR, "NovaCart_Customer_QA_Knowledge_Base.docx"),
+    "hr_policies":     os.path.join(DATA_DIR, "NovaCart_HR_Policies.docx"),
     "shipments":       os.path.join(DATA_DIR, "NovaCart_Shipment_Status_Database.xlsx"),
 }
 
@@ -121,13 +122,19 @@ def ingest():
 
     all_chunks = []
 
-    print("Reading Company Profile...")
-    text = extract_docx(DOCS["company_profile"])
-    all_chunks.extend(chunk_text(text, "company_profile"))
-
-    print("Reading Q&A Knowledge Base...")
-    text = extract_docx(DOCS["qa_knowledge"])
-    all_chunks.extend(chunk_text(text, "qa_knowledge"))
+    doc_jobs = [
+        ("company_profile", "Company Profile"),
+        ("qa_knowledge", "Q&A Knowledge Base"),
+        ("hr_policies", "HR Policies"),
+    ]
+    for source, label in doc_jobs:
+        path = DOCS[source]
+        if not os.path.exists(path):
+            print(f"Skipping {label}: file not found at {path}")
+            continue
+        print(f"Reading {label}...")
+        text = extract_docx(path)
+        all_chunks.extend(chunk_text(text, source))
 
     print("Reading Shipment Database...")
     records = extract_shipments(DOCS["shipments"])

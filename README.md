@@ -12,9 +12,10 @@ novacart_chatbot/
 ├── ingest.py           ← Document ingestion & indexing pipeline
 ├── rag.py              ← Retrieval logic (semantic search + shipment lookup)
 ├── requirements.txt    ← Python dependencies
-├── data/               ← Put the 3 source documents here
+├── data/               ← Put the source documents here
 │   ├── NovaCart_Company_Profile.docx
 │   ├── NovaCart_Customer_QA_Knowledge_Base.docx
+│   ├── NovaCart_HR_Policies.docx
 │   └── NovaCart_Shipment_Status_Database.xlsx
 ├── chroma_db/          ← Auto-created by ingest.py
 └── shipments.json      ← Auto-created by ingest.py (fast exact lookup)
@@ -45,7 +46,7 @@ pip install -r requirements.txt
 
 ### 3. Place documents in `data/`
 
-Copy the three NovaCart files into the `data/` folder (already done if you received this project pre-packaged).
+Copy the NovaCart files into the `data/` folder (already done if you received this project pre-packaged).
 
 ### 4. Run ingestion (one-time setup)
 
@@ -54,7 +55,7 @@ python ingest.py
 ```
 
 This will:
-- Parse all 3 documents
+- Parse all available source documents
 - Chunk and embed the text
 - Store everything in `chroma_db/`
 - Export `shipments.json` for fast ID lookups
@@ -76,6 +77,7 @@ Open your browser at `http://localhost:8501`
 | **Model selector** | Switch between `qwen2.5:3b`, `qwen2.5:7b`, `qwen2.5:14b` in the sidebar |
 | **Shipment ID lookup** | Detects `NVC########` pattern, does exact match before semantic search |
 | **Semantic RAG** | ChromaDB + `all-MiniLM-L6-v2` embeddings retrieve the most relevant chunks |
+| **HR policy support** | Adds retrieval over employee HR policy content (leave, attendance, payroll, conduct) |
 | **Relevance gate** | Off-topic questions get a polite redirect instead of a hallucinated answer |
 | **Source badges** | Each answer shows which document(s) it came from |
 | **Conversation memory** | Last 6 turns kept in context for follow-up questions |

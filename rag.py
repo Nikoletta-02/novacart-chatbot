@@ -72,6 +72,7 @@ def retrieve(query: str, k: int = 5) -> list[dict]:
 SOURCE_LABELS = {
     "company_profile": "Company Profile",
     "qa_knowledge":    "Customer Q&A",
+    "hr_policies":     "HR Policies",
     "shipments":       "Shipment Database",
 }
 
@@ -82,6 +83,9 @@ ALLOWED_TOPICS = [
     "warranty", "cancel", "address", "wallet", "courier", "invoice",
     "product", "grocery", "fashion", "electronics", "membership",
     "coupon", "cash on delivery", "account", "support", "nvc",
+    "hr", "employee", "leave", "vacation", "sick leave", "parental",
+    "payroll", "compensation", "attendance", "remote work", "work from home",
+    "probation", "performance review", "disciplinary", "grievance",
 ]
 
 RELEVANCE_THRESHOLD = 1.2   # ChromaDB cosine distance; lower = more similar
