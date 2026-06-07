@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated vector stores
+chroma_db/
+
+# Local reference/homework copy
+HW3_Asier_Ugarteche/

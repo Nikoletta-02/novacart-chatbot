@@ -15,6 +15,7 @@ from rag import (
     extract_shipment_id,
     lookup_shipment,
     SOURCE_LABELS,
+    RELEVANCE_THRESHOLD,
 )
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -124,6 +125,10 @@ if "history" not in st.session_state:
     st.session_state.history = []        # [{role, content}]
 if "model" not in st.session_state:
     st.session_state.model = AVAILABLE_MODELS[1]   # default 7b
+if "shipment_regex_enabled" not in st.session_state:
+    st.session_state.shipment_regex_enabled = True
+if "relevance_threshold" not in st.session_state:
+    st.session_state.relevance_threshold = RELEVANCE_THRESHOLD
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -142,6 +147,23 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.session_state.model = selected_model
+
+    with st.expander("Settings"):
+        st.session_state.shipment_regex_enabled = st.toggle(
+            "Shipment regex search",
+            value=st.session_state.shipment_regex_enabled,
+            help="Detect NVC######## IDs and run an exact shipment lookup before RAG.",
+        )
+        st.caption("When on, messages containing an NVC######## ID use exact shipment lookup before RAG.")
+        st.session_state.relevance_threshold = st.slider(
+            "Relevance threshold",
+            min_value=0.1,
+            max_value=2.0,
+            value=float(st.session_state.relevance_threshold),
+            step=0.05,
+            help="Lower values make off-topic filtering stricter; higher values make it more permissive.",
+        )
+        st.caption("Lower means stricter off-topic filtering; higher means more permissive.")
 
     st.divider()
     st.subheader("Topics I can help with")
@@ -198,8 +220,10 @@ if user_input:
         sources_placeholder  = st.empty()
 
         # ── Step 1: Shipment ID exact lookup ─────────────────────────────────
-        shipment_id  = extract_shipment_id(user_input)
+        shipment_id  = None
         shipment_rec = None
+        if st.session_state.shipment_regex_enabled:
+            shipment_id = extract_shipment_id(user_input)
         if shipment_id:
             shipment_rec = lookup_shipment(shipment_id)
 
@@ -207,7 +231,11 @@ if user_input:
         chunks = retrieve(user_input, k=5)
 
         # ── Step 3: Relevance gate ────────────────────────────────────────────
-        if not is_relevant(user_input, chunks):
+        if not is_relevant(
+            user_input,
+            chunks,
+            threshold=st.session_state.relevance_threshold,
+        ):
             response_placeholder.markdown(
                 f'<div class="offtrack">{OFF_TOPIC_RESPONSE}</div>',
                 unsafe_allow_html=True,
@@ -239,6 +267,7 @@ if user_input:
             # ── Step 5: Build message history for Ollama ─────────────────────
             messages = [{"role": "system", "content": SYSTEM_PROMPT}]
             # Include last 6 turns for context
+            # this could be parametrised or improved with a smarter selection strategy (e.g. include all turns since last shipment mention)
             for h in st.session_state.history[:-1][-6:]:
                 messages.append({"role": h["role"], "content": h["content"]})
             messages.append({"role": "user", "content": rag_prompt})

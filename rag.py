@@ -88,17 +88,21 @@ ALLOWED_TOPICS = [
     "probation", "performance review", "disciplinary", "grievance",
 ]
 
-RELEVANCE_THRESHOLD = 1.2   # ChromaDB cosine distance; lower = more similar
+RELEVANCE_THRESHOLD = 1.2   # ChromaDB cosine distance; lower = stricter
 
 
-def is_relevant(query: str, chunks: list[dict]) -> bool:
+def is_relevant(
+    query: str,
+    chunks: list[dict],
+    threshold: float = RELEVANCE_THRESHOLD,
+) -> bool:
     """Return True if the query looks on-topic."""
     q_lower = query.lower()
     # Fast keyword check
     if any(kw in q_lower for kw in ALLOWED_TOPICS):
         return True
     # Fall back to embedding distance
-    if chunks and chunks[0]["distance"] < RELEVANCE_THRESHOLD:
+    if chunks and chunks[0]["distance"] < threshold:
         return True
     return False
 
