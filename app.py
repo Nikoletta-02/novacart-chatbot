@@ -16,6 +16,8 @@ from rag import (
     format_context,
     extract_shipment_id,
     lookup_shipment,
+    augment_query,
+    update_conversation_memory,
     SOURCE_LABELS,
     SYSTEM_PROMPT,
     OFF_TOPIC_RESPONSE,
@@ -96,6 +98,28 @@ RETRIEVAL_METHODS = {
     "hybrid": "Hybrid",
 }
 
+def _rewrite_query(query: str, history: list[dict], model: str) -> str:
+    """LLM fallback: rewrite a referential query as a standalone question."""
+    recent_text = "\n".join(
+        f"{h['role'].upper()}: {h['content'][:300]}"
+        for h in history[-4:]
+    )
+    prompt = (
+        f"Conversation so far:\n{recent_text}\n\n"
+        f"Latest message: \"{query}\"\n\n"
+        f"Rewrite the latest message as a complete standalone question in one sentence, "
+        f"resolving any pronouns or vague references using the conversation above. "
+        f"Output only the rewritten question, nothing else."
+    )
+    resp = ollama.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        stream=False,
+        options={"temperature": 0.0},
+    )
+    return resp["message"]["content"].strip()
+
+
 # ── Session state ─────────────────────────────────────────────────────────────
 if "history" not in st.session_state:
     st.session_state.history = []        # [{role, content}]
@@ -109,6 +133,10 @@ if "reranking_enabled" not in st.session_state:
     st.session_state.reranking_enabled = False
 if "retrieval_method" not in st.session_state:
     st.session_state.retrieval_method = "vector"
+if "conversation_memory" not in st.session_state:
+    st.session_state.conversation_memory = {"shipment_ids": [], "active_shipment": None, "topics": []}
+if "last_retrieval_tier" not in st.session_state:
+    st.session_state.last_retrieval_tier = "passthrough"
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -160,6 +188,29 @@ with st.sidebar:
         )
         st.caption("Lower means stricter off-topic filtering; higher means more permissive.")
 
+    with st.expander("Session Memory"):
+        mem = st.session_state.conversation_memory
+        tier_labels = {
+            "passthrough":      "⬜ Passthrough",
+            "entity_injection": "🟢 Entity injection",
+            "llm_rewrite":      "🟡 LLM rewrite",
+        }
+        tier = st.session_state.last_retrieval_tier
+        st.caption(f"Last retrieval: **{tier_labels.get(tier, tier)}**")
+        if mem["shipment_ids"]:
+            st.caption(f"**Shipments:** {', '.join(mem['shipment_ids'])}")
+        if mem["active_shipment"]:
+            s = mem["active_shipment"]
+            st.caption(
+                f"**Active:** {s.get('Shipment ID', '—')} · "
+                f"{s.get('Status', '—')} · "
+                f"{s.get('Destination City', '—')}"
+            )
+        if mem["topics"]:
+            st.caption(f"**Topics:** {', '.join(mem['topics'])}")
+        if not mem["shipment_ids"] and not mem["topics"]:
+            st.caption("No entities tracked yet.")
+
     st.divider()
     st.subheader("Topics I can help with")
     topics = [
@@ -177,6 +228,8 @@ with st.sidebar:
     st.divider()
     if st.button("Clear conversation", use_container_width=True):
         st.session_state.history = []
+        st.session_state.conversation_memory = {"shipment_ids": [], "active_shipment": None, "topics": []}
+        st.session_state.last_retrieval_tier = "passthrough"
         st.rerun()
 
     st.caption(f"Model: `{st.session_state.model}`")
@@ -222,10 +275,25 @@ if user_input:
         if shipment_id:
             shipment_rec = lookup_shipment(shipment_id)
 
+        # ── Step 1.5: Augment query with session memory ───────────────────────
+        retrieval_query, tier = augment_query(user_input, st.session_state.conversation_memory)
+        if tier == "needs_llm_rewrite" and len(st.session_state.history) > 1:
+            try:
+                retrieval_query = _rewrite_query(
+                    user_input,
+                    st.session_state.history[:-1],
+                    st.session_state.model,
+                )
+                tier = "llm_rewrite"
+            except Exception:
+                retrieval_query = user_input
+                tier = "passthrough"
+        st.session_state.last_retrieval_tier = tier
+
         # ── Step 2: Context retrieval ─────────────────────────────────────────
         retrieval_k = RERANK_CANDIDATES if st.session_state.reranking_enabled else 5
         chunks = retrieve_context(
-            user_input,
+            retrieval_query,
             mode=st.session_state.retrieval_method,
             k=retrieval_k,
         )
@@ -235,12 +303,12 @@ if user_input:
         relevance_chunks = (
             chunks
             if st.session_state.retrieval_method == "vector"
-            else retrieve(user_input, k=5)
+            else retrieve(retrieval_query, k=5)
         )
 
         # ── Step 3: Relevance gate ────────────────────────────────────────────
         if not is_relevant(
-            user_input,
+            retrieval_query,
             relevance_chunks,
             threshold=st.session_state.relevance_threshold,
         ):
@@ -324,3 +392,10 @@ if user_input:
             st.session_state.history.append(
                 {"role": "assistant", "content": full_response}
             )
+
+        # ── Step 9: Update conversation memory ───────────────────────────────
+        update_conversation_memory(
+            st.session_state.conversation_memory,
+            user_input,
+            shipment_rec,
+        )

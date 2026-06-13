@@ -310,3 +310,82 @@ def format_context(chunks: list[dict]) -> str:
         label = SOURCE_LABELS.get(c["source"], c["source"])
         parts.append(f"[{label}]\n{c['text']}")
     return "\n\n---\n\n".join(parts)
+
+
+# ── Conversation memory ────────────────────────────────────────────────────────
+
+TOPIC_GROUPS: dict[str, list[str]] = {
+    "shipment":   ["shipment", "order", "track", "status", "nvc", "parcel", "package"],
+    "delivery":   ["delivery", "deliver", "courier", "arrive", "arrival", "reschedule", "address"],
+    "return":     ["return", "refund", "exchange", "cancel"],
+    "payment":    ["payment", "pay", "wallet", "novawallet", "cash", "invoice", "coupon"],
+    "membership": ["novaplus", "membership", "subscription"],
+    "hr":         ["hr", "employee", "leave", "vacation", "sick", "payroll", "attendance", "remote"],
+}
+
+_REFERENTIAL_RE = re.compile(
+    r"\b(it|its|they|them|their|this|that|these|those)\b"
+    r"|\bthe (order|shipment|package|parcel|item|product|courier|delivery)\b"
+    r"|\bsame (one|order|shipment|package)\b"
+    r"|\b(above|mentioned|previous)\b",
+    re.IGNORECASE,
+)
+
+
+def is_referential(query: str) -> bool:
+    """Return True if the query contains pronouns or references that depend on prior context."""
+    return bool(_REFERENTIAL_RE.search(query))
+
+
+def extract_topics(text: str) -> list[str]:
+    """Return a list of topic tags present in text."""
+    lower = text.lower()
+    return [tag for tag, kws in TOPIC_GROUPS.items() if any(kw in lower for kw in kws)]
+
+
+def update_conversation_memory(
+    memory: dict, user_message: str, shipment_rec: dict | None
+) -> None:
+    """Incrementally update session entity memory after a user turn. Mutates memory in place."""
+    ship_id = extract_shipment_id(user_message)
+    if ship_id and ship_id not in memory["shipment_ids"]:
+        memory["shipment_ids"].append(ship_id)
+    if shipment_rec is not None:
+        memory["active_shipment"] = shipment_rec
+    for topic in extract_topics(user_message):
+        if topic not in memory["topics"]:
+            memory["topics"].append(topic)
+
+
+def augment_query(query: str, memory: dict) -> tuple[str, str]:
+    """
+    Augment a retrieval query with tracked session entities when the query is referential.
+
+    Returns (retrieval_query, tier) where tier is one of:
+      'passthrough'       – query is self-contained; used as-is
+      'entity_injection'  – session entities appended to the query string
+      'needs_llm_rewrite' – referential but memory is empty; caller should LLM-rewrite
+    """
+    if not is_referential(query):
+        return query, "passthrough"
+
+    context_parts: list[str] = []
+
+    active = memory.get("active_shipment")
+    if active:
+        context_parts.append(
+            f"shipment {active.get('Shipment ID', '')} "
+            f"status={active.get('Status', '')} "
+            f"destination={active.get('Destination City', '')} "
+            f"courier={active.get('Courier', '')}"
+        )
+    elif memory.get("shipment_ids"):
+        context_parts.append("shipments: " + ", ".join(memory["shipment_ids"]))
+
+    if memory.get("topics"):
+        context_parts.append("topics: " + ", ".join(memory["topics"]))
+
+    if not context_parts:
+        return query, "needs_llm_rewrite"
+
+    return f"{query} [session context: {'; '.join(context_parts)}]", "entity_injection"
